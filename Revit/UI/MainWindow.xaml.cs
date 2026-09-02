@@ -12,6 +12,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using ValidationResult = RevitEtabsValidator.Core.Validation.ValidationResult;
 namespace RevitEtabsValidator.Revit.UI;
 public partial class MainWindow:Window
 {
@@ -45,7 +46,7 @@ public partial class MainWindow:Window
         var pts=new List<Point3D>();pts.AddRange(revB.SelectMany(x=>new[]{x.StartPoint,x.EndPoint}));pts.AddRange(etaB.SelectMany(x=>new[]{x.StartPoint,x.EndPoint}));pts.AddRange(revC.Select(x=>x.CenterPoint));pts.AddRange(etaC.Select(x=>x.CenterPoint));if(pts.Count==0){return;}
         double minX=pts.Min(p=>p.X),maxX=pts.Max(p=>p.X),minY=pts.Min(p=>p.Y),maxY=pts.Max(p=>p.Y);double w=Math.Max(1,maxX-minX),h=Math.Max(1,maxY-minY);double cw=Math.Max(100,PlanCanvas.ActualWidth-20),ch=Math.Max(100,PlanCanvas.ActualHeight-20);if(double.IsNaN(cw)||double.IsInfinity(cw))cw=700;if(double.IsNaN(ch)||double.IsInfinity(ch))ch=500;double scale=Math.Min(cw/w,ch/h)*0.92;Point P(Point3D p)=>new((p.X-minX)*scale+10,(maxY-p.Y)*scale+10);
         foreach(var b in revB)Line(P(b.StartPoint),P(b.EndPoint),Brushes.Gray,2,false);foreach(var b in etaB)Line(P(b.StartPoint),P(b.EndPoint),Brushes.DarkGray,2,true);
-        foreach(var c in revC)Circle(P(c.CenterPoint),5,Brushes.SteelBlue);foreach(var c in etaC)Circle(P(c.CenterPoint),4,Brushes.Orange, true);
+        foreach(var c in revC)Circle(P(c.CenterPoint),5,Brushes.SteelBlue);foreach(var c in etaC)Circle(P(c.CenterPoint),4,Brushes.Orange,true);
         foreach(var r in _all.Where(x=>string.Equals(x.StoryOrLevel,level,StringComparison.OrdinalIgnoreCase)&&x.Status!=ValidationStatus.Matched))
         {var src=FindPoint(r);if(src.HasValue){var q=P(src.Value);Circle(q,7,Brushes.Red,true);}}
         void Line(Point a,Point b,Brush brush,double thickness,bool dash){var l=new Line{X1=a.X,Y1=a.Y,X2=b.X,Y2=b.Y,Stroke=brush,StrokeThickness=thickness};if(dash)l.StrokeDashArray=new System.Windows.Media.DoubleCollection{5,4};PlanCanvas.Children.Add(l);} void Circle(Point q,double rad,Brush brush,bool hollow=false){var el=new Ellipse{Width=rad*2,Height=rad*2,Stroke=brush,StrokeThickness=2,Fill=hollow?Brushes.Transparent:brush};Canvas.SetLeft(el,q.X-rad);Canvas.SetTop(el,q.Y-rad);PlanCanvas.Children.Add(el);}
