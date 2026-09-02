@@ -19,10 +19,9 @@ Write-Host "Cleaning previous build output..." -ForegroundColor Cyan
 dotnet clean $project -c $Configuration --nologo
 if ($LASTEXITCODE -ne 0) { throw "dotnet clean failed with exit code $LASTEXITCODE." }
 
-$binRoot = Join-Path $projectRoot "bin\$Configuration"
-if (Test-Path -LiteralPath $binRoot) {
-    Remove-Item -LiteralPath $binRoot -Recurse -Force -ErrorAction Stop
-}
+# Do not manually remove bin\Release here. The compiled DLL may be loaded by a previous
+# verification run in this same PowerShell process, which would make Remove-Item fail.
+# dotnet clean/build already handles stale build artifacts safely.
 
 Write-Host "Building RevitEtabsValidator ($Configuration)..." -ForegroundColor Cyan
 dotnet build $project -c $Configuration --nologo
@@ -33,22 +32,34 @@ if (!(Test-Path -LiteralPath $dll)) {
     throw "Build succeeded but DLL was not found at: $dll"
 }
 
-# Verify the compiled artifact, not only the source file. This catches stale or wrong DLLs before Revit sees them.
+# Verify the compiled artifact without loading the actual build DLL into this PowerShell
+# process. Loading the build output directly can lock it and break the next installer run.
+$verifyRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("RevitEtabsValidator-verify-{0}" -f [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $verifyRoot | Out-Null
+$verifyDll = Join-Path $verifyRoot 'RevitEtabsValidator.dll'
 try {
-    $assembly = [System.Reflection.Assembly]::LoadFrom($dll)
+    Copy-Item -LiteralPath $dll -Destination $verifyDll -Force
+
+    $assembly = [System.Reflection.Assembly]::LoadFrom($verifyDll)
     $appType = $assembly.GetType('RevitEtabsValidator.App', $false, $false)
     $commandType = $assembly.GetType('RevitEtabsValidator.Revit.Commands.ShowValidatorCommand', $false, $false)
+
     if ($null -eq $appType) {
         throw "Compiled DLL does not contain RevitEtabsValidator.App. The local source/build is not the expected revision."
     }
     if ($null -eq $commandType) {
         throw "Compiled DLL does not contain RevitEtabsValidator.Revit.Commands.ShowValidatorCommand."
     }
+
     Write-Host "Artifact verified: RevitEtabsValidator.App and ShowValidatorCommand are present." -ForegroundColor Green
     Write-Host "Assembly identity: $($assembly.FullName)"
 }
 catch {
     throw "Compiled artifact verification failed: $($_.Exception.Message)"
+}
+finally {
+    # The verification assembly may remain loaded, so only attempt cleanup best-effort.
+    try { Remove-Item -LiteralPath $verifyRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
 
 $destRoot = Join-Path $env:APPDATA ("Autodesk\Revit\Addins\{0}" -f $RevitVersion)
@@ -76,28 +87,39 @@ $manifest = @"
 
 Set-Content -LiteralPath $destManifest -Value $manifest -Encoding UTF8
 
-# Final deployment verification.
-$writtenManifest = Get-Content -LiteralPath $destManifest -Raw
-if ($writtenManifest -notmatch [regex]::Escape($escapedDll)) {
-    throw "Manifest verification failed. Assembly path in $destManifest does not match $destDll"
-}
-if ($writtenManifest -match 'CouplingBeamVerifier') {
-    throw "Manifest verification failed: CouplingBeamVerifier reference detected in $destManifest"
-}
-if (!(Test-Path -LiteralPath $destDll)) {
-    throw "DLL verification failed: $destDll"
-}
+# Final deployment verification without loading the live installed DLL. Copy it to a
+# temporary location first so the deployed file is not locked by this PowerShell process.
+$installedVerifyRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("RevitEtabsValidator-installed-verify-{0}" -f [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $installedVerifyRoot | Out-Null
+$installedVerifyDll = Join-Path $installedVerifyRoot 'RevitEtabsValidator.dll'
+try {
+    $writtenManifest = Get-Content -LiteralPath $destManifest -Raw
+    if ($writtenManifest -notmatch [regex]::Escape($escapedDll)) {
+        throw "Manifest verification failed. Assembly path in $destManifest does not match $destDll"
+    }
+    if ($writtenManifest -match 'CouplingBeamVerifier') {
+        throw "Manifest verification failed: CouplingBeamVerifier reference detected in $destManifest"
+    }
+    if (!(Test-Path -LiteralPath $destDll)) {
+        throw "DLL verification failed: $destDll"
+    }
 
-$installedAssembly = [System.Reflection.Assembly]::LoadFrom($destDll)
-if ($null -eq $installedAssembly.GetType('RevitEtabsValidator.App', $false, $false)) {
-    throw "Installed DLL verification failed: RevitEtabsValidator.App is missing from $destDll"
+    Copy-Item -LiteralPath $destDll -Destination $installedVerifyDll -Force
+    $installedAssembly = [System.Reflection.Assembly]::LoadFrom($installedVerifyDll)
+    if ($null -eq $installedAssembly.GetType('RevitEtabsValidator.App', $false, $false)) {
+        throw "Installed DLL verification failed: RevitEtabsValidator.App is missing from $destDll"
+    }
+
+    Write-Host "Installed artifact verified: RevitEtabsValidator.App is present." -ForegroundColor Green
+    Write-Host "Assembly identity: $($installedAssembly.FullName)"
+}
+finally {
+    try { Remove-Item -LiteralPath $installedVerifyRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 }
 
 Write-Host ""
 Write-Host "Installation complete." -ForegroundColor Green
 Write-Host "DLL:      $destDll"
 Write-Host "Manifest: $destManifest"
-Write-Host "Assembly: $($installedAssembly.FullName)"
 Write-Host ""
-Write-Host "The installer will now STOP before deployment if the DLL does not contain RevitEtabsValidator.App." -ForegroundColor Yellow
-Write-Host "Close Revit 2025 completely before running this script again." -ForegroundColor Yellow
+Write-Host "IMPORTANT: Close Revit 2025 completely before running this script again." -ForegroundColor Yellow
