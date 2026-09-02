@@ -6,14 +6,14 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $project = Join-Path $projectRoot 'RevitEtabsValidator.csproj'
-if (!(Test-Path $project)) { throw "Project file not found: $project" }
+if (!(Test-Path -LiteralPath $project)) { throw "Project file not found: $project" }
 
 Write-Host "Building RevitEtabsValidator ($Configuration)..." -ForegroundColor Cyan
 dotnet build $project -c $Configuration --nologo
 if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE." }
 
 $dll = Join-Path $projectRoot ("bin\{0}\RevitEtabsValidator.dll" -f $Configuration)
-if (!(Test-Path $dll)) {
+if (!(Test-Path -LiteralPath $dll)) {
     throw "Build succeeded but DLL was not found at: $dll"
 }
 
@@ -42,9 +42,25 @@ $manifest = @"
 
 Set-Content -LiteralPath $destManifest -Value $manifest -Encoding UTF8
 
-Write-Host "" 
+# Hard verification: the generated manifest must point to the exact DLL we just copied.
+$writtenManifest = Get-Content -LiteralPath $destManifest -Raw
+if ($writtenManifest -notmatch [regex]::Escape($escapedDll)) {
+    throw "Manifest verification failed. Assembly path in $destManifest does not match $destDll"
+}
+if ($writtenManifest -match 'CouplingBeamVerifier') {
+    throw "Manifest verification failed: CouplingBeamVerifier reference detected in $destManifest"
+}
+if (!(Test-Path -LiteralPath $destDll)) {
+    throw "DLL verification failed: $destDll"
+}
+
+Write-Host ""
 Write-Host "Installation complete." -ForegroundColor Green
 Write-Host "DLL:      $destDll"
 Write-Host "Manifest: $destManifest"
-Write-Host "" 
+Write-Host ""
+Write-Host "Manifest Assembly value:" -ForegroundColor Cyan
+Write-Host "  $destDll"
+Write-Host ""
 Write-Host "Verify BOTH files exist in the Revit $RevitVersion Addins folder, then restart Revit $RevitVersion." -ForegroundColor Yellow
+Write-Host "If Revit still reports a TypeLoadException, run .\Installer\Diagnose-RevitEtabsValidator.ps1" -ForegroundColor Yellow
