@@ -11,6 +11,8 @@
     <LangVersion>latest</LangVersion>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <StartAction>Program</StartAction>
+    <StartProgram>$(RevitInstallPath)\Revit.exe</StartProgram>
   </PropertyGroup>
   <PropertyGroup>
     <RevitInstallPath Condition="'$(RevitInstallPath)'==''">$(ProgramFiles)\Autodesk\Revit 2025</RevitInstallPath>
